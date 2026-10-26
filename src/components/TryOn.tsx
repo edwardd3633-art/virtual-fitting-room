@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { computeBodyShape } from "@/domain/bodyShape";
 import { type GarmentMeasurementsCm, defaultSelection, findProduct, resolveAsset, sizeAvailability, variantHasTryOn } from "@/domain/catalog";
 import { DEFAULT_ENGINES, NoSupportedEngineError, VALIDATION_LABELS, runFit } from "@/domain/fitting";
+import { type FitRegion, REGION_LABELS, REGION_ORDER, regionFocus } from "@/domain/fitRegions";
 import { createLook, sameLook } from "@/domain/looks";
 import { DEFAULT_MEASUREMENTS } from "@/domain/measurements";
 import { type LengthUnit, formatLength, fromCm, roundForDisplay } from "@/domain/units";
@@ -39,15 +40,26 @@ function Difference({ garmentCm, bodyCm, unit }: { garmentCm: number; bodyCm: nu
   );
 }
 
-const GARMENT_ROWS: { key: keyof GarmentMeasurementsCm; label: string; body?: "chestCm" | "waistCm" | "hipsCm" | "shoulderWidthCm" }[] = [
-  { key: "chest", label: "Chest (circumference)", body: "chestCm" },
-  { key: "waist", label: "Waist (circumference)", body: "waistCm" },
-  { key: "hip", label: "Hip (circumference)", body: "hipsCm" },
-  { key: "shoulder", label: "Shoulder width", body: "shoulderWidthCm" },
+const GARMENT_ROWS: {
+  key: keyof GarmentMeasurementsCm;
+  label: string;
+  body?: "chestCm" | "waistCm" | "hipsCm" | "shoulderWidthCm";
+  /** Body region to show in 3D when the row is picked. */
+  region?: FitRegion;
+}[] = [
+  { key: "chest", label: "Chest (circumference)", body: "chestCm", region: "chest" },
+  { key: "waist", label: "Waist (circumference)", body: "waistCm", region: "waist" },
+  { key: "hip", label: "Hip (circumference)", body: "hipsCm", region: "hip" },
+  { key: "shoulder", label: "Shoulder width", body: "shoulderWidthCm", region: "shoulder" },
   { key: "hem", label: "Hem (circumference)" },
-  { key: "sleeveLength", label: "Sleeve length" },
+  { key: "sleeveLength", label: "Sleeve length", region: "sleeve" },
   { key: "length", label: "Garment length" },
 ];
+
+/** The table row for each region, for the readout shown while a region is in focus. */
+const ROW_FOR_REGION = Object.fromEntries(GARMENT_ROWS.filter((r) => r.region).map((r) => [r.region, r])) as Partial<
+  Record<FitRegion, (typeof GARMENT_ROWS)[number]>
+>;
 
 /** Fit the garment for one size, or explain why it can't be shown. */
 function useFit(productId: string, variantId: string | undefined, sizeLabel: string | null | undefined, shape: ReturnType<typeof computeBodyShape>) {
@@ -105,6 +117,8 @@ export function TryOn({ productId }: { productId: string }) {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [showOverlap, setShowOverlap] = useState(true);
   const [autoRotate, setAutoRotate] = useState(false);
+  const [focusRegion, setFocusRegion] = useState<FitRegion | null>(null);
+  const stageRef = useRef<HTMLElement>(null);
 
   const select = useCallback(
     (next: { variant?: string; size?: string; compare?: string | null }) => {
@@ -191,6 +205,19 @@ export function TryOn({ productId }: { productId: string }) {
   }
   const canCompare = sizes.filter((s) => s.available).length > 1;
 
+  /** Show a region in 3D (or go back to the whole body if it's already shown). */
+  function toggleFocus(region: FitRegion) {
+    const next = focusRegion === region ? null : region;
+    setFocusRegion(next);
+    if (next) track({ name: "region_focused", props: { productId, region: next } });
+    // On narrow screens the table sits below the stage: bring the stage back into view.
+    const el = stageRef.current;
+    if (next && el) {
+      const top = el.getBoundingClientRect().top;
+      if (top < 0 || top > window.innerHeight * 0.5) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
+
   if (!product || product.variants.every((v) => !variantHasTryOn(catalog, productId, v.variantId))) {
     return (
       <div className="panel narrow">
@@ -213,28 +240,82 @@ export function TryOn({ productId }: { productId: string }) {
     ...(asset2 && compareLabel ? [{ label: compareLabel, asset: asset2 }] : []),
   ];
 
-  const overlapChip = (st: GarmentStats, prefix: string) => (
-    <span className="glass-chip overlap" role="note">
-      <span className="dot" aria-hidden="true" />
-      <span>
-        {prefix}
-        {showOverlap ? "Highlighted" : "Some"} areas: this size is smaller than the avatar by up to {formatLength(st.maxOverlapM * 100, unit)}.
+  const overlapChip = (st: GarmentStats, prefix: string) => {
+    const regions = REGION_ORDER.filter((r) => st.regions[r] != null);
+    return (
+      <span className="glass-chip overlap" role="note">
+        <span className="dot" aria-hidden="true" />
+        {regions.length > 0 ? (
+          <span className="overlap-body">
+            <span>{prefix}Smaller than the avatar at:</span>
+            <span className="region-pills">
+              {regions.map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  className="region-pill"
+                  aria-pressed={focusRegion === r}
+                  title={`Show ${REGION_LABELS[r].toLowerCase()} up close`}
+                  onClick={() => toggleFocus(r)}
+                >
+                  {REGION_LABELS[r]} <span className="muted">{formatLength(st.regions[r]! * 100, unit)}</span>
+                </button>
+              ))}
+            </span>
+          </span>
+        ) : (
+          <span>
+            {prefix}
+            {showOverlap ? "Highlighted" : "Some"} areas: this size is smaller than the avatar by up to {formatLength(st.maxOverlapM * 100, unit)}.
+          </span>
+        )}
+        <button type="button" aria-pressed={showOverlap} onClick={() => setShowOverlap((s) => !s)}>
+          {showOverlap ? "Hide tint" : "Show tint"}
+        </button>
       </span>
-      <button type="button" aria-pressed={showOverlap} onClick={() => setShowOverlap((s) => !s)}>
-        {showOverlap ? "Hide" : "Show"}
+    );
+  };
+
+  const focus = focusRegion ? regionFocus(shape, focusRegion) : null;
+  const focusTight = !!focusRegion && [overlap1, overlap2].some((st) => st?.regions[focusRegion] != null);
+  const focusRow = focusRegion ? ROW_FOR_REGION[focusRegion] : undefined;
+  const focusChip = focusRegion && (
+    <div className={`glass-chip focus-chip${focusTight ? " tight" : ""}`} role="status">
+      <span className="focus-title">{REGION_LABELS[focusRegion]}</span>
+      {focusRow && (
+        <span className="focus-figures">
+          {focusRow.body && (
+            <span>
+              You <strong>{formatLength(measurements[focusRow.body], unit)}</strong>
+            </span>
+          )}
+          {garmentCols.map((c) => {
+            const g = c.asset.garmentMeasurements[focusRow.key];
+            return g == null ? null : (
+              <span key={c.label}>
+                {c.label} <strong>{formatLength(g, unit)}</strong>
+              </span>
+            );
+          })}
+        </span>
+      )}
+      <button type="button" aria-label="Back to full body" onClick={() => setFocusRegion(null)}>
+        ✕
       </button>
-    </span>
+    </div>
   );
 
   return (
     <div className="split">
-      <section className="stage" aria-label="Try-on preview">
+      <section className="stage" aria-label="Try-on preview" ref={stageRef}>
         <LazyViewport
           shape={shape}
           view={view}
           viewNonce={viewNonce}
           label={`Prototype mannequin wearing ${selectionLabel}. Static preview, not simulated.`}
           autoRotate={autoRotate}
+          focus={focus}
+          focusTone={focusTight ? "overlap" : "accent"}
           scanKey={fit && loadedUrls.includes(fit.assetUrl) ? `${fit.assetUrl}|${fit2?.assetUrl ?? ""}` : undefined}
           secondary={
             comparing && fit2 && !asset2Failed && handlers.secondary ? (
@@ -270,10 +351,12 @@ export function TryOn({ productId }: { productId: string }) {
                 </span>
               )}
               <div className="stage-overlay bottom">
+                {focusChip}
                 <ViewControls
                   view={view}
                   onSelect={(v) => {
                     setAutoRotate(false);
+                    setFocusRegion(null);
                     setView(v);
                     setViewNonce((n) => n + 1);
                   }}
@@ -435,8 +518,23 @@ export function TryOn({ productId }: { productId: string }) {
                 </thead>
                 <tbody>
                   {GARMENT_ROWS.filter((r) => garmentCols.some((c) => c.asset.garmentMeasurements[r.key] != null)).map((r) => (
-                    <tr key={r.key}>
-                      <th scope="row">{r.label}</th>
+                    <tr key={r.key} className={r.region && r.region === focusRegion ? "focused" : undefined}>
+                      <th scope="row">
+                        {r.region ? (
+                          <button
+                            type="button"
+                            className="row-focus"
+                            aria-pressed={r.region === focusRegion}
+                            title={r.region === focusRegion ? "Back to full body" : "Show where this is measured"}
+                            onClick={() => toggleFocus(r.region!)}
+                          >
+                            <span className="target" aria-hidden="true" />
+                            {r.label}
+                          </button>
+                        ) : (
+                          r.label
+                        )}
+                      </th>
                       {garmentCols.map((c) => {
                         const g = c.asset.garmentMeasurements[r.key];
                         return (
@@ -463,7 +561,7 @@ export function TryOn({ productId }: { productId: string }) {
               </table>
             </div>
             <p className="caveat">
-              Garment figures are demo data, not taken from a real product. Difference is garment minus body; comparing numbers is not a fit
+              Pick a measurement to see where it sits on the avatar. Garment figures are demo data, not taken from a real product. Difference is garment minus body; comparing numbers is not a fit
               recommendation.
             </p>
 

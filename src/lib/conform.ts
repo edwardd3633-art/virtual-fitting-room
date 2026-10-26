@@ -26,6 +26,18 @@ export interface ConformOptions {
   sleeveExtra?: number;
   /** Displacement-smoothing iterations. */
   iterations?: number;
+  /**
+   * Names the region a point belongs to (avatar-space height and part tag),
+   * so overlap can be reported per region. Return null to leave it out.
+   */
+  regionOf?: (y: number, part: number) => string | null;
+}
+
+export interface RegionOverlap {
+  /** Deepest penetration in the region (m). */
+  maxM: number;
+  /** Fraction of all garment vertices that overlap in this region. */
+  fraction: number;
 }
 
 export interface ConformResult {
@@ -34,6 +46,8 @@ export interface ConformResult {
   maxOverlapM: number;
   /** Fraction of garment vertices flagged as overlapping. */
   overlapFraction: number;
+  /** Overlap broken down by `opts.regionOf`; empty without it. */
+  regionOverlap: Record<string, RegionOverlap>;
 }
 
 /** Penetration depth (m) at which the overlap highlight starts / is full. */
@@ -127,6 +141,7 @@ export function conformGarment(source: BufferGeometry, offset: readonly [number,
   const overlap = new Float32Array(n);
   let maxOverlap = 0;
   let overlapCount = 0;
+  const regionOverlap: Record<string, RegionOverlap> = {};
   const clearanceOf = (p: number) => (p === GARMENT_PART.sleeve || p === GARMENT_PART.sleeveCap ? clearance + sleeveExtra : clearance);
   // Overlap is only reported where the garment's size is defined by its measurements.
   const reportsOverlap = (p: number) => p === GARMENT_PART.shell || p === GARMENT_PART.sleeve;
@@ -145,7 +160,15 @@ export function conformGarment(source: BufferGeometry, offset: readonly [number,
       if (reportsOverlap(p)) {
         if (pen > maxOverlap) maxOverlap = pen;
         overlap[i] = smoothstep(OVERLAP_START_M, OVERLAP_FULL_M, pen);
-        if (pen > OVERLAP_START_M) overlapCount++;
+        if (pen > OVERLAP_START_M) {
+          overlapCount++;
+          const r = opts.regionOf?.(pos[i * 3 + 1]!, p);
+          if (r) {
+            const acc = (regionOverlap[r] ??= { maxM: 0, fraction: 0 });
+            acc.maxM = Math.max(acc.maxM, pen);
+            acc.fraction++;
+          }
+        }
       }
     } else {
       const gap = d - c;
@@ -230,5 +253,6 @@ export function conformGarment(source: BufferGeometry, offset: readonly [number,
   out.setIndex(new Uint32BufferAttribute(tri, 1));
   out.computeVertexNormals();
   out.computeBoundingSphere();
-  return { geometry: out, maxOverlapM: maxOverlap, overlapFraction: overlapCount / n };
+  for (const r of Object.values(regionOverlap)) r.fraction /= n;
+  return { geometry: out, maxOverlapM: maxOverlap, overlapFraction: overlapCount / n, regionOverlap };
 }

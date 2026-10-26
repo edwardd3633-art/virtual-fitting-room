@@ -3,8 +3,19 @@
 import { Suspense, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Environment, Lightformer, OrbitControls } from "@react-three/drei";
-import { AdditiveBlending, Color, type Mesh, type MeshBasicMaterial, Vector3 } from "three";
+import {
+  AdditiveBlending,
+  type BufferGeometry,
+  CatmullRomCurve3,
+  Color,
+  LineCurve3,
+  type Mesh,
+  type MeshBasicMaterial,
+  TubeGeometry,
+  Vector3,
+} from "three";
 import type { BodyShape } from "@/domain/bodyShape";
+import type { FocusMarker, RegionFocus } from "@/domain/fitRegions";
 import { Avatar } from "./Avatar";
 
 export type CameraView = "front" | "side" | "back";
@@ -21,23 +32,29 @@ interface OrbitLike {
   autoRotate: boolean;
 }
 
-/** Glides the camera around the avatar to the chosen view instead of jumping. */
+/**
+ * Glides the camera around the avatar to the chosen view instead of jumping,
+ * and moves the look-at point too, so focusing on a region zooms smoothly.
+ */
 function CameraRig({ view, nonce, targetY, distance, autoRotate }: { view: CameraView; nonce: number; targetY: number; distance: number; autoRotate: boolean }) {
   const controls = useThree((s) => s.controls) as OrbitLike | null;
   const camera = useThree((s) => s.camera);
-  const anim = useRef<{ from: Vector3; az0: number; az1: number; r0: number; y0: number; t: number } | null>(null);
+  const anim = useRef<{ az0: number; az1: number; r0: number; y0: number; ty0: number; t: number } | null>(null);
+  const placed = useRef(false);
 
   useEffect(() => {
     if (!controls) return;
-    controls.target.set(0, targetY, 0);
-    const from = camera.position.clone();
+    // First placement: look at the target straight away rather than gliding from the origin.
+    if (!placed.current) controls.target.set(0, targetY, 0);
+    placed.current = true;
+    const from = camera.position.clone().sub(controls.target);
     const az0 = Math.atan2(from.x, from.z);
     let az1 = VIEW_AZIMUTH[view];
     // Take the short way round.
     while (az1 - az0 > Math.PI) az1 -= 2 * Math.PI;
     while (az1 - az0 < -Math.PI) az1 += 2 * Math.PI;
-    anim.current = { from, az0, az1, r0: Math.hypot(from.x, from.z), y0: from.y, t: 0 };
-  }, [view, nonce, controls, camera, targetY]);
+    anim.current = { az0, az1, r0: Math.hypot(from.x, from.z), y0: from.y, ty0: controls.target.y, t: 0 };
+  }, [view, nonce, controls, camera, targetY, distance]);
 
   useEffect(() => {
     if (controls) controls.autoRotate = autoRotate;
@@ -50,8 +67,12 @@ function CameraRig({ view, nonce, targetY, distance, autoRotate }: { view: Camer
     const e = 1 - Math.pow(1 - a.t, 3);
     const az = a.az0 + (a.az1 - a.az0) * e;
     const r = a.r0 + (distance - a.r0) * e;
-    const y = a.y0 + (targetY + 0.08 - a.y0) * e;
-    camera.position.set(Math.sin(az) * r, y, Math.cos(az) * r);
+    // Camera height relative to the target: a slight look-down, more of one when close.
+    const lift = 0.08 * (distance / 3.8);
+    const ty = a.ty0 + (targetY - a.ty0) * e;
+    const y = a.y0 + (lift - a.y0) * e;
+    controls.target.set(0, ty, 0);
+    camera.position.set(Math.sin(az) * r, ty + y, Math.cos(az) * r);
     controls.update();
     if (a.t >= 1) anim.current = null;
   });
@@ -79,6 +100,62 @@ function ScanSweep({ trigger, height, radius }: { trigger: string | undefined; h
       <ringGeometry args={[radius * 0.98, radius, 96]} />
       <meshBasicMaterial color="#8fb4ff" transparent opacity={0} blending={AdditiveBlending} depthWrite={false} toneMapped={false} />
     </mesh>
+  );
+}
+
+/** Tube along an ellipse at body height: the tape measure for a circumference. */
+function ringGeometry(y: number, rx: number, rz: number): BufferGeometry {
+  const pts: Vector3[] = [];
+  for (let i = 0; i < 96; i++) {
+    const a = (i / 96) * Math.PI * 2;
+    pts.push(new Vector3(Math.sin(a) * rx, y, Math.cos(a) * rz));
+  }
+  return new TubeGeometry(new CatmullRomCurve3(pts, true), 192, 0.0035, 8, true);
+}
+
+/**
+ * Where a measurement is taken, drawn as a glowing tape that writes itself on.
+ * Rendered without depth testing so it reads through the garment, like an x-ray.
+ */
+function MeasureMarker({ marker, tone }: { marker: FocusMarker; tone: "accent" | "overlap" }) {
+  const geo = useMemo(() => {
+    if (marker.kind === "ring") return ringGeometry(marker.y, marker.section.rx + 0.004, marker.section.rz + 0.004);
+    if (marker.kind === "span") {
+      const h = marker.halfWidth;
+      return new TubeGeometry(new LineCurve3(new Vector3(-h, marker.y, 0), new Vector3(h, marker.y, 0)), 64, 0.0035, 8, false);
+    }
+    return null;
+  }, [marker]);
+  useEffect(() => () => geo?.dispose(), [geo]);
+  const mat = useRef<MeshBasicMaterial>(null);
+  const t = useRef(0);
+  useEffect(() => {
+    t.current = 0;
+  }, [geo]);
+  useFrame((state, dt) => {
+    if (!geo || !mat.current) return;
+    t.current = Math.min(1, t.current + dt / 0.7);
+    const e = 1 - Math.pow(1 - t.current, 3);
+    const count = geo.index?.count ?? 0;
+    geo.setDrawRange(0, Math.floor((count * e) / 3) * 3);
+    mat.current.opacity = 0.75 + Math.sin(state.clock.elapsedTime * 3) * 0.2;
+  });
+  if (!geo) return null;
+  const color = tone === "overlap" ? "#ff7a94" : "#9fc0ff";
+  const ends = marker.kind === "span" ? [-marker.halfWidth, marker.halfWidth] : [];
+  return (
+    <group renderOrder={10}>
+      <mesh geometry={geo} renderOrder={10}>
+        <meshBasicMaterial ref={mat} color={color} transparent depthTest={false} depthWrite={false} blending={AdditiveBlending} toneMapped={false} />
+      </mesh>
+      {marker.kind === "span" &&
+        ends.map((x) => (
+          <mesh key={x} position={[x, marker.y, 0]} renderOrder={10}>
+            <sphereGeometry args={[0.009, 16, 12]} />
+            <meshBasicMaterial color={color} transparent opacity={0.9} depthTest={false} depthWrite={false} toneMapped={false} />
+          </mesh>
+        ))}
+    </group>
   );
 }
 
@@ -134,18 +211,35 @@ export interface ViewportProps {
    * drawn to the right wearing this content, and `children` moves to the left.
    */
   secondary?: ReactNode;
+  /** Zoom to a body region and mark where it is measured; null shows the whole body. */
+  focus?: RegionFocus | null;
+  /** Marker colour: "overlap" when the shown size is smaller than the body there. */
+  focusTone?: "accent" | "overlap";
 }
 
 /** How far each avatar sits from the centre in compare mode (m); platforms just touch. */
 const PAIR_OFFSET_M = 0.62;
 
-export default function Viewport({ shape, view, viewNonce, children, label, overlay, autoRotate = false, scanKey, secondary }: ViewportProps) {
+export default function Viewport({
+  shape,
+  view,
+  viewNonce,
+  children,
+  label,
+  overlay,
+  autoRotate = false,
+  scanKey,
+  secondary,
+  focus = null,
+  focusTone = "accent",
+}: ViewportProps) {
   const pair = secondary !== undefined;
   const half = pair ? PAIR_OFFSET_M : 0;
-  const targetY = shape.heightM * 0.5;
-  // Pull back in compare mode so both avatars fit the frame.
-  const distance = shape.heightM * (pair ? 2.9 : 2.25);
+  const targetY = focus ? focus.y : shape.heightM * 0.5;
+  // Pull back in compare mode so both avatars fit the frame; move in close on a focused region.
+  const distance = shape.heightM * (focus ? (pair ? 1.9 : 1.05) : pair ? 2.9 : 2.25);
   const initial = useRef<[number, number, number]>([0, targetY + 0.08, distance]);
+  const marker = focus && focus.marker.kind !== "none" ? <MeasureMarker marker={focus.marker} tone={focusTone} /> : null;
 
   return (
     <div className="viewport" role="img" aria-label={label}>
@@ -159,6 +253,7 @@ export default function Viewport({ shape, view, viewNonce, children, label, over
           <Platform />
           <Avatar shape={shape} />
           <Suspense fallback={null}>{children}</Suspense>
+          {marker}
           <ScanSweep trigger={scanKey} height={shape.heightM + 0.02} radius={0.5} />
         </group>
         {pair && (
@@ -166,6 +261,7 @@ export default function Viewport({ shape, view, viewNonce, children, label, over
             <Platform />
             <Avatar shape={shape} />
             <Suspense fallback={null}>{secondary}</Suspense>
+            {marker}
             <ScanSweep trigger={scanKey} height={shape.heightM + 0.02} radius={0.5} />
           </group>
         )}
@@ -179,7 +275,6 @@ export default function Viewport({ shape, view, viewNonce, children, label, over
           maxDistance={6}
           minPolarAngle={0.25}
           maxPolarAngle={Math.PI / 2 + 0.05}
-          target={[0, targetY, 0]}
         />
         <CameraRig view={view} nonce={viewNonce} targetY={targetY} distance={distance} autoRotate={autoRotate} />
       </Canvas>

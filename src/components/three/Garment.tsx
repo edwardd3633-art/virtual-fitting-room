@@ -5,6 +5,7 @@ import { useGLTF } from "@react-three/drei";
 import { BufferAttribute, type BufferGeometry, Color, DoubleSide, type Mesh, type MeshStandardMaterial } from "three";
 import type { BodyShape } from "@/domain/bodyShape";
 import type { FitResult } from "@/domain/fitting";
+import { type FitRegion, torsoRegionAt } from "@/domain/fitRegions";
 import { withBasePath } from "@/lib/basePath";
 import { createBodySdf } from "@/lib/bodySdf";
 import { type ConformResult, conformGarment } from "@/lib/conform";
@@ -16,7 +17,12 @@ export const OVERLAP_COLOR = "#ff5a7a";
 export interface GarmentStats {
   maxOverlapM: number;
   overlapFraction: number;
+  /** Deepest overlap per region (m), leaving out regions with only a few stray vertices. */
+  regions: Partial<Record<FitRegion, number>>;
 }
+
+/** Below this share of vertices a region's overlap is noise from the approximate shapes. */
+const MIN_REGION_FRACTION = 0.002;
 
 function findMesh(root: { traverse(cb: (o: unknown) => void): void }): Mesh | null {
   let found: Mesh | null = null;
@@ -66,16 +72,20 @@ function GarmentMesh({
   const sdf = useMemo(() => createBodySdf(shape), [shape]);
   // Key on the anchor's values, not the array's identity, so an equal fit never re-runs the conform.
   const [px, py, pz] = fit.position;
-  const conformed = useMemo<ConformResult | null>(
-    () => (source ? conformGarment(source.geometry, [px, py, pz], sdf) : null),
-    [source, px, py, pz, sdf],
-  );
+  const conformed = useMemo<ConformResult | null>(() => {
+    if (!source) return null;
+    const regionOf = (y: number, part: number): FitRegion => (part === GARMENT_PART.sleeve ? "sleeve" : torsoRegionAt(shape, y));
+    return conformGarment(source.geometry, [px, py, pz], sdf, { regionOf });
+  }, [source, px, py, pz, sdf, shape]);
   const baseColor = useMemo(() => ((source?.material as MeshStandardMaterial | undefined)?.color ?? new Color("#888888")).clone(), [source]);
 
   useMemo(() => conformed && paint(conformed.geometry, baseColor, showOverlap), [conformed, baseColor, showOverlap]);
   useEffect(() => () => conformed?.geometry.dispose(), [conformed]);
   useEffect(() => {
-    if (conformed) onLoaded?.({ maxOverlapM: conformed.maxOverlapM, overlapFraction: conformed.overlapFraction });
+    if (!conformed) return;
+    const regions: GarmentStats["regions"] = {};
+    for (const [r, o] of Object.entries(conformed.regionOverlap)) if (o.fraction >= MIN_REGION_FRACTION) regions[r as FitRegion] = o.maxM;
+    onLoaded?.({ maxOverlapM: conformed.maxOverlapM, overlapFraction: conformed.overlapFraction, regions });
   }, [conformed, onLoaded]);
 
   if (!conformed) return null;

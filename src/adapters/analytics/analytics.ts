@@ -3,6 +3,8 @@
  * The MVP sink only logs in development; no data leaves the browser.
  * Never include body measurements in event payloads.
  */
+import type { FitRegion } from "@/domain/fitRegions";
+
 export type AnalyticsEvent =
   | { name: "avatar_saved"; props: { isNew: boolean } }
   | { name: "avatar_deleted"; props: Record<string, never> }
@@ -12,6 +14,7 @@ export type AnalyticsEvent =
   | { name: "size_switched"; props: { productId: string; from: string; to: string } }
   | { name: "return_to_product"; props: { productId: string; variantId: string; size: string } }
   | { name: "size_compare_started"; props: { productId: string; sizes: [string, string] } }
+  | { name: "region_focused"; props: { productId: string; region: FitRegion } }
   | { name: "look_saved"; props: { productId: string; variantId: string; size: string; compareSize: string | null } }
   | { name: "look_removed"; props: Record<string, never> }
   | { name: "data_exported"; props: Record<string, never> }

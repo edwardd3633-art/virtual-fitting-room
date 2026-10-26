@@ -373,3 +373,36 @@ td.num .diff { margin-top: 2px; }
 }
 .saved-grid .actions { margin-top: 0.6rem; }
 #save-look-status:empty { display: none; }
+
+/* Measurement focus: pick a measurement or a tight region to see it on the avatar */
+.row-focus {
+  display: inline-flex; align-items: center; gap: 0.5rem; min-height: 32px; padding: 0.2rem 0.55rem 0.2rem 0.35rem; margin-left: -0.35rem;
+  border-color: transparent; background: transparent; font-weight: 500; text-align: left; color: var(--ink);
+}
+.row-focus:hover:not(:disabled) { background: var(--surface-strong); border-color: var(--line); }
+.row-focus .target {
+  position: relative; width: 14px; height: 14px; flex: none; border-radius: 50%;
+  border: 1.5px solid var(--faint); transition: border-color 0.25s var(--ease), box-shadow 0.25s var(--ease);
+}
+.row-focus .target::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: var(--faint); transition: background 0.25s var(--ease); }
+.row-focus:hover .target, .row-focus[aria-pressed="true"] .target { border-color: var(--accent); box-shadow: 0 0 10px rgba(138, 180, 255, 0.5); }
+.row-focus:hover .target::after, .row-focus[aria-pressed="true"] .target::after { background: var(--accent); }
+tbody tr { transition: background 0.25s var(--ease); }
+tbody tr.focused { background: linear-gradient(90deg, rgba(138, 180, 255, 0.12), rgba(182, 156, 255, 0.04)); }
+
+.overlap-body { display: flex; flex-direction: column; gap: 6px; }
+.region-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.glass-chip .region-pill { border-color: rgba(255, 90, 122, 0.35); background: rgba(255, 90, 122, 0.1); }
+.glass-chip .region-pill:hover:not(:disabled) { background: rgba(255, 90, 122, 0.2); border-color: rgba(255, 90, 122, 0.6); }
+.glass-chip .region-pill[aria-pressed="true"] { background: rgba(255, 90, 122, 0.28); border-color: var(--overlap); box-shadow: 0 0 14px rgba(255, 90, 122, 0.35); }
+
+.focus-chip { gap: 12px; padding: 6px 6px 6px 16px; max-width: 100%; flex-wrap: wrap; justify-content: center; box-shadow: 0 0 0 1px rgba(138, 180, 255, 0.25), 0 0 28px rgba(138, 180, 255, 0.18); }
+.focus-chip.tight { box-shadow: 0 0 0 1px rgba(255, 90, 122, 0.35), 0 0 28px rgba(255, 90, 122, 0.2); }
+.focus-title { font-weight: 650; background: var(--accent-gradient); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.focus-chip.tight .focus-title { background: none; color: #ff9cb0; }
+.focus-figures { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.focus-figures strong { color: var(--ink); font-weight: 600; }
+.focus-chip button { width: 28px; height: 28px; min-height: 28px; padding: 0; border-radius: 50%; }
+@media (prefers-reduced-motion: no-preference) {
+  .focus-chip { animation: rise 0.5s var(--ease) both; }
+}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { anchorY, computeBodyShape } from "@/domain/bodyShape";
+import { torsoRegionAt } from "@/domain/fitRegions";
 import { DEFAULT_MEASUREMENTS } from "@/domain/measurements";
 import { createBodySdf } from "@/lib/bodySdf";
 import { conformGarment } from "@/lib/conform";
@@ -120,6 +121,16 @@ describe("garment conform", () => {
     expect(roomy.overlapFraction).toBeLessThan(0.01);
     expect(tight.overlapFraction).toBeGreaterThan(0.1);
     expect(tight.maxOverlapM).toBeGreaterThan(roomy.maxOverlapM);
+  });
+
+  it("says where the garment is smaller than the body", () => {
+    const regionOf = (y: number, part: number) => (part === GARMENT_PART.sleeve ? "sleeve" : torsoRegionAt(shape, y));
+    // Small chest, generous everywhere else.
+    const tight = conformGarment(buildTee({ chest: 84, waist: 110, hem: 112, shoulder: 46, sleeveLength: 20, length: 66 }), offset, sdf, { regionOf });
+    expect(tight.regionOverlap.chest?.maxM).toBeGreaterThan(0.012);
+    expect(tight.regionOverlap.waist).toBeUndefined();
+    const roomy = conformGarment(buildTee({ chest: 110, waist: 108, hem: 110, shoulder: 46, sleeveLength: 20, length: 66 }), offset, sdf, { regionOf });
+    expect(Object.values(roomy.regionOverlap).every((r) => r.fraction < 0.002)).toBe(true);
   });
 
   it("settles the shoulders onto the body instead of floating above it", () => {

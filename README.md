@@ -50,6 +50,7 @@ npm run dev          # http://localhost:3000
 | Missing or broken asset → fallback message, no crash (AC-9) | `Garment.tsx` error boundary; try "Show QA fixtures" in the catalog |
 | Prototype disclosures (AC-10, FR-047) | Banner, try-on limitations list, home page |
 | Side-by-side comparison of two sizes on identical avatars (FR-043) | "Compare two sizes side by side" on the try-on screen |
+| Measurement focus: pick a measurement row, or a region named in the "smaller than the avatar" chip, and the camera zooms in and draws where it's measured; tight regions glow pink | `src/domain/fitRegions.ts`, `MeasureMarker` in `Viewport.tsx` |
 | Saved looks: keep a product/colour/size (or a size comparison) and reopen it later (journey step 11) | "Save this look" → `/saved`; `src/domain/looks.ts` |
 | Download my data / delete all my data (PRD §8) | "Your data" on `/avatar` |
 
@@ -72,6 +73,7 @@ src/
     bodyShape.ts       PROTOTYPE measurements → mannequin proportions
     catalog.ts         Product → Variant → Size → GarmentAsset; resolution & QA checks
     fitting.ts         FittingEngine interface + StaticAnchorEngine
+    fitRegions.ts      body regions (shoulders, chest, waist, hips, sleeves): where to look, what to draw
   adapters/
     storage/           ProfileStore interface; LocalProfileStore (localStorage)
     retailers/         DemoCatalog adapter (real retailer adapters go here)
@@ -141,7 +143,7 @@ For real garments, canonical source files (CLO/Browzwear/Style3D projects, patte
 ## Known limitations
 
 - **Mannequin:** the avatar is a smooth blend of sculpted primitives around a lofted torso. Its landmark heights are fixed fractions of height, and the torso cross-sections at chest, waist and hips are ellipses whose perimeter matches the entered circumference (tested to ±2% at waist and hips). It moves in the right direction as values change, but it isn't anatomically calibrated (PRD FR-016).
-- **Garment placement:** garments are attached at the shoulder or waist line, then conformed geometrically (`lib/conform.ts`): pushed out of the body, settled onto up-facing surfaces such as the shoulders, and smoothed. The garment's size is never changed. Where it is more than 1.2 cm smaller than the body, that area is tinted and the viewer says by how much. The shoulder yoke and sleeve cap are approximate and excluded from that report. None of this is a fit prediction.
+- **Garment placement:** garments are attached at the shoulder or waist line, then conformed geometrically (`lib/conform.ts`): pushed out of the body, settled onto up-facing surfaces such as the shoulders, and smoothed. The garment's size is never changed. Where it is more than 1.2 cm smaller than the body, that area is tinted and the viewer says where (by region, assigned from landmark height only) and by how much. The shoulder yoke and sleeve cap are approximate and excluded from that report. None of this is a fit prediction.
 - **Demo garments:** they are procedural shapes built from fictional measurement tables. They have no patterns, seams, textures or fabric properties: every physical property is recorded as `not-captured`.
 - **Accounts:** there are none (FR-001 is deferred). Saved avatars and looks don't sync across browsers or devices.
 - **Unsaved-changes warning:** the avatar editor warns on reload or closing the tab. Clicking an in-app link with unsaved edits doesn't warn yet.
