@@ -3,13 +3,16 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { createProfile, touch } from "@/domain/avatar";
+import { buildDataExport } from "@/domain/looks";
 import { computeBodyShape } from "@/domain/bodyShape";
 import { type BodyMeasurementsCm, DEFAULT_MEASUREMENTS, MEASUREMENT_SPECS, type MeasurementKey, validateMeasurements } from "@/domain/measurements";
 import { type LengthUnit, fromCm, roundForDisplay, toCm } from "@/domain/units";
 import { track } from "@/adapters/analytics/analytics";
+import { downloadJson } from "@/lib/download";
 import { LazyViewport } from "./LazyViewport";
 import { MeasurementForm } from "./MeasurementForm";
 import { useProfile } from "./ProfileProvider";
+import { useSavedLooks } from "./useSavedLooks";
 import { ViewControls } from "./ViewControls";
 import type { CameraView } from "./three/Viewport";
 
@@ -30,7 +33,9 @@ function previewable(draft: BodyMeasurementsCm, lastGood: BodyMeasurementsCm): B
 }
 
 export function AvatarEditor() {
-  const { status, profile, save, remove } = useProfile();
+  const { status, profile, save, remove, listAll } = useProfile();
+  const { looks, clear: clearLooks } = useSavedLooks();
+  const [confirmWipe, setConfirmWipe] = useState(false);
   const saved = profile?.measurements ?? DEFAULT_MEASUREMENTS;
 
   const [unit, setUnit] = useState<LengthUnit>("cm");
@@ -69,6 +74,14 @@ export function AvatarEditor() {
     if (issues.length === 0) setLastGood(draft);
   }, [draft, issues.length]);
 
+  // Unsaved-changes guard: the browser shows its own "Leave site?" prompt on reload or close.
+  useEffect(() => {
+    if (!dirty || status !== "ready") return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty, status]);
+
   function setField(key: MeasurementKey, cm: number, rawText?: string) {
     setNotice(null);
     setDraft((d) => ({ ...d, [key]: cm }));
@@ -105,6 +118,21 @@ export function AvatarEditor() {
     } catch (err) {
       setNotice({ kind: "error", text: err instanceof Error ? err.message : "Couldn't save your avatar." });
     }
+  }
+
+  async function onExport() {
+    const data = buildDataExport({ avatars: await listAll(), savedLooks: looks ?? [] });
+    downloadJson(`fitting-room-my-data-${data.exportedAt.slice(0, 10)}.json`, data);
+    track({ name: "data_exported", props: {} });
+    setNotice({ kind: "ok", text: "Your data was downloaded as a JSON file." });
+  }
+
+  async function onWipe() {
+    await remove();
+    clearLooks();
+    track({ name: "all_data_deleted", props: {} });
+    setConfirmWipe(false);
+    setNotice({ kind: "ok", text: "All your data was deleted from this browser: avatar, measurements and saved looks." });
   }
 
   async function onDelete() {
@@ -169,6 +197,12 @@ export function AvatarEditor() {
           </p>
         )}
 
+        {status === "loading" ? (
+          // Don't show default numbers that would jump once the saved avatar loads.
+          <div className="form-skeleton" aria-busy="true">
+            <span className="spinner" aria-hidden="true" /> Loading your saved avatar…
+          </div>
+        ) : (
         <form
           noValidate
           onSubmit={(e) => {
@@ -198,11 +232,41 @@ export function AvatarEditor() {
             </Link>
           </div>
         </form>
+        )}
 
         {notice && (
           <p className={notice.kind === "ok" ? "notice" : "error"} role="status">
             {notice.text}
           </p>
+        )}
+
+        {status === "ready" && (
+          <div className="danger-zone">
+            <h2>Your data</h2>
+            <p className="muted">
+              Everything is stored in this browser only: {profile ? "1 avatar" : "no avatar"} and {looks?.length ?? 0} saved look
+              {looks?.length === 1 ? "" : "s"}.
+            </p>
+            <div className="actions">
+              <button type="button" onClick={() => void onExport()}>
+                Download my data
+              </button>
+              {confirmWipe ? (
+                <>
+                  <button type="button" className="danger" onClick={() => void onWipe()}>
+                    Yes, delete everything
+                  </button>
+                  <button type="button" onClick={() => setConfirmWipe(false)}>
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <button type="button" onClick={() => setConfirmWipe(true)} disabled={!profile && !looks?.length}>
+                  Delete all my data…
+                </button>
+              )}
+            </div>
+          </div>
         )}
 
         {profile && (

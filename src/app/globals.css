@@ -360,3 +360,16 @@ thead th.num { text-align: right; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* Compare mode, saved looks, data controls */
+.compare-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin-top: 0.9rem; }
+.compare-row > span { color: var(--muted); font-size: 0.9rem; }
+.link-button { background: transparent; border-color: transparent; color: var(--accent); padding-inline: 0.4rem; }
+.link-button:hover:not(:disabled) { background: transparent; border-color: transparent; text-decoration: underline; }
+td.num .diff { margin-top: 2px; }
+.form-skeleton {
+  display: flex; align-items: center; gap: 10px; min-height: 240px; justify-content: center;
+  color: var(--muted); border: 1px dashed var(--line-strong); border-radius: 14px; margin: 1rem 0;
+}
+.saved-grid .actions { margin-top: 0.6rem; }
+#save-look-status:empty { display: none; }

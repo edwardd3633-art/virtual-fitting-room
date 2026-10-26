@@ -1,0 +1,58 @@
+# Builds the app as static files and publishes it to GitHub Pages on every
+# push to main. One-time setup: repo Settings → Pages → Source: "GitHub Actions".
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; don't cancel one that's already publishing.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Work out the site's sub-path
+        # Project sites live at https://<user>.github.io/<repo>/; a repo named
+        # <user>.github.io is served from the root instead.
+        run: |
+          repo="${{ github.event.repository.name }}"
+          if [[ "$repo" == *.github.io ]]; then echo "BASE_PATH=" >> "$GITHUB_ENV"; else echo "BASE_PATH=/$repo" >> "$GITHUB_ENV"; fi
+      - name: Build static site
+        run: npm run build
+        env:
+          STATIC_EXPORT: "1"
+          NEXT_PUBLIC_BASE_PATH: ${{ env.BASE_PATH }}
+          NEXT_TELEMETRY_DISABLED: "1"
+      # Without this, Pages' Jekyll step would hide the _next/ folder.
+      - run: touch out/.nojekyll
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -5,6 +5,7 @@ import { useGLTF } from "@react-three/drei";
 import { BufferAttribute, type BufferGeometry, Color, DoubleSide, type Mesh, type MeshStandardMaterial } from "three";
 import type { BodyShape } from "@/domain/bodyShape";
 import type { FitResult } from "@/domain/fitting";
+import { withBasePath } from "@/lib/basePath";
 import { createBodySdf } from "@/lib/bodySdf";
 import { type ConformResult, conformGarment } from "@/lib/conform";
 import { GARMENT_PART } from "@/lib/demoGarments";
@@ -59,7 +60,8 @@ function GarmentMesh({
   showOverlap: boolean;
   onLoaded?: (stats: GarmentStats) => void;
 }) {
-  const gltf = useGLTF(fit.assetUrl, false, false);
+  // Catalog URLs are site-relative; add the deploy sub-path (GitHub Pages) when there is one.
+  const gltf = useGLTF(withBasePath(fit.assetUrl), false, false);
   const source = useMemo(() => findMesh(gltf.scene), [gltf.scene]);
   const sdf = useMemo(() => createBodySdf(shape), [shape]);
   // Key on the anchor's values, not the array's identity, so an equal fit never re-runs the conform.

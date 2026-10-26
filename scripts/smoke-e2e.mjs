@@ -49,7 +49,32 @@ const evalJs = async (expr) => {
   return r.result.result.value;
 };
 let curPath = "";
-const go = async (path, wait = 2500) => { curPath = path; await send("Page.navigate", { url: BASE + path }); await sleep(wait); };
+/** Poll until `cond` (a JS expression) is truthy in the page, so slow devices don't cause false failures. */
+const waitFor = async (cond, timeoutMs = 30000) => {
+  const end = Date.now() + timeoutMs;
+  while (Date.now() < end) {
+    try {
+      const r = await send("Runtime.evaluate", { expression: `!!(${cond})`, returnByValue: true });
+      if (r.result.result?.value === true) return true;
+    } catch {}
+    await sleep(150);
+  }
+  throw new Error(`Timed out on ${curPath} waiting for: ${cond}`);
+};
+// Ready conditions only become true after hydration (the server HTML shows loading placeholders).
+const READY = {
+  avatar: "document.querySelector('#m-heightCm')",
+  tryOn: "document.querySelector('.selection') && (document.querySelector('tbody tr') || document.querySelector('[role=alert]'))",
+  garmentLoaded: "!document.querySelector('.loading-chip') || document.querySelector('[role=alert]')",
+  catalog: "document.querySelector('.product-card')",
+  saved: "document.querySelector('.product-card') || document.body.textContent.includes(\"haven't saved\")",
+};
+const go = async (path, ready) => {
+  curPath = path;
+  await send("Page.navigate", { url: BASE + path });
+  await sleep(300);
+  if (ready) await waitFor(ready);
+};
 const shot = async (name) => { const r = await send("Page.captureScreenshot", { format: "png" }); writeFileSync(`${S}/${name}.png`, Buffer.from(r.result.data, "base64")); };
 const HELPERS = `
   const $ = (s) => document.querySelector(s);
@@ -61,9 +86,11 @@ const check = (name, ok, detail = "") => { results.push(`${ok ? "PASS" : "FAIL"}
 
 await send("Page.enable");
 await send("Runtime.enable");
+// "Download my data" is exercised, but the file itself shouldn't land on disk.
+await send("Page.setDownloadBehavior", { behavior: "deny" });
 
 // 1. Avatar editor: validation, units, save
-await go("/avatar", 4000);
+await go("/avatar", READY.avatar);
 let r = await evalJs(`${HELPERS}
   setVal($('#m-heightCm'), '120'); await wait(200);
   const err = $('#m-heightCm-err')?.textContent; const saveDisabled = btn('Save avatar').disabled;
@@ -82,7 +109,7 @@ check("persisted canonical cm + unit pref", stored?.measurements.heightCm === 18
 await shot("e2e-avatar-saved");
 
 // 2. Reload: profile restored; edit then reset
-await go("/avatar", 4000);
+await go("/avatar", READY.avatar);
 r = await evalJs(`${HELPERS}
   const before = $("#m-heightCm").value;
   setVal($('#m-heightCm'), '60'); await wait(200);
@@ -92,44 +119,72 @@ check("reload restores saved avatar in inches", r.before === "71.7" && r.unitPre
 check("discard changes resets unsaved edit", r.after === "71.7", r.after);
 
 // 3. Try-on: saved avatar used, size switching preserves avatar
-await go("/try-on/demo-a-line-skirt?variant=terracotta&size=S", 5000);
+await go("/try-on/demo-a-line-skirt?variant=terracotta&size=S", READY.tryOn);
+await waitFor(READY.garmentLoaded);
 r = await evalJs(`${HELPERS} return { sel: $('.selection').textContent, defaultNotice: !!document.body.textContent.includes('default avatar'), you: [...document.querySelectorAll('tbody tr')].map(t=>t.textContent) };`);
 check("try-on shows selected variant/size", r.sel.includes("Terracotta") && r.sel.includes("S"), r.sel);
 check("try-on uses saved avatar", !r.defaultNotice && r.you.some((t) => t.includes("Hip") && t.includes("40.9 in")), r.you.join(" | "));
 await shot("e2e-skirt-s");
-r = await evalJs(`${HELPERS} [...document.querySelectorAll('.sizes button')].find(b=>b.textContent==='M').click(); await wait(2500);
+r = await evalJs(`${HELPERS} [...document.querySelectorAll('.sizes button')].find(b=>b.textContent==='M').click(); await wait(500);
   return { url: location.search, sel: $('.selection').textContent, lDisabled: [...document.querySelectorAll('.sizes button')].find(b=>b.textContent==='L').disabled, notes: $('.size-notes').textContent };`);
 check("size switch updates URL + label", r.url.includes("size=M") && r.sel.includes("M"), r.url);
 check("unapproved size L disabled with reason", r.lDisabled && r.notes.includes("quality review"), r.notes);
 await shot("e2e-skirt-m");
-r = await evalJs(`${HELPERS} btn('Side').click(); await wait(800); return true;`);
+await waitFor(READY.garmentLoaded);
+r = await evalJs(`${HELPERS} btn('Side').click(); await wait(1200); return true;`);
 await shot("e2e-skirt-m-side");
 
+// 3b. Side-by-side comparison (FR-043) and saving it
+r = await evalJs(`${HELPERS} btn('Front').click(); btn('Compare two sizes').click(); await wait(500);
+  return { url: location.search, chips: [...document.querySelectorAll('.glass-chip.live')].map(c=>c.textContent.trim()), cols: [...document.querySelectorAll('thead th')].map(t=>t.textContent.trim()) };`);
+check("compare adds second size to URL", /compare=S\b/.test(r.url), r.url);
+check("compare labels left/right sizes", r.chips.includes("Left: size M") && r.chips.includes("Right: size S"), r.chips.join(" / "));
+check("compare table shows both sizes", r.cols.includes("Size M") && r.cols.includes("Size S"), r.cols.join(" | "));
+await waitFor(READY.garmentLoaded);
+await sleep(1000);
+await shot("e2e-compare");
+r = await evalJs(`${HELPERS} btn('Save this comparison').click(); await wait(300);
+  return { stored: JSON.parse(localStorage.getItem('vfr.savedLooks.v1') ?? '[]'), label: [...document.querySelectorAll('.actions button')].find(b => b.textContent.startsWith('Saved'))?.textContent };`);
+check("save comparison persists a look", r.stored.length === 1 && r.stored[0].sizeLabel === "M" && r.stored[0].compareSizeLabel === "S" && r.label === "Saved ✓", JSON.stringify(r.stored[0] ?? {}));
+await go("/saved", READY.saved);
+r = await evalJs(`${HELPERS} return { cards: [...document.querySelectorAll('.product-card')].map(c=>c.textContent), href: btn('Open comparison')?.getAttribute('href') };`);
+check("saved page lists the look with a working link", r.cards.length === 1 && r.cards[0].includes("Size M vs S") && /compare=S/.test(r.href ?? ""), r.href);
+
 // 4. Deep link to unavailable size falls back
-await go("/try-on/demo-relaxed-tee?variant=ecru&size=XL", 4000);
+await go("/try-on/demo-relaxed-tee?variant=ecru&size=XL", READY.tryOn);
 r = await evalJs(`${HELPERS} return { sel: $('.selection').textContent, note: [...document.querySelectorAll('[role=status]')].map(n=>n.textContent).join(' ') };`);
 check("deep link to XL falls back with explanation", r.sel.includes("XS") && /XL can.t be shown/.test(r.note), `${r.sel} / ${r.note}`);
 
 // 5. Broken asset fallback
-await go("/try-on/qa-missing-file-tee?variant=grey&size=M", 6000);
+await go("/try-on/qa-missing-file-tee?variant=grey&size=M", "document.querySelector('[role=alert]')");
 r = await evalJs(`${HELPERS} return [...document.querySelectorAll('[role=alert]')].map(n=>n.textContent).join(' ');`);
 check("missing asset shows fallback, no crash", r.includes("couldn't load the 3D garment"), r.slice(0, 80));
 await shot("e2e-broken-asset");
 
 // 6. Catalog hides fixtures by default
-await go("/catalog", 2000);
+await go("/catalog", READY.catalog);
 r = await evalJs(`${HELPERS} return [...document.querySelectorAll('.product-card h2')].map(h=>h.textContent);`);
 check("catalog lists only shopper products", JSON.stringify(r) === JSON.stringify(["Demo Relaxed Tee", "Demo A-line Midi Skirt"]), r.join(", "));
 
 // 7. Delete avatar
-await go("/avatar", 4000);
+await go("/avatar", READY.avatar);
 r = await evalJs(`${HELPERS} btn('Delete avatar').click(); await wait(200); btn('Yes, delete').click(); await wait(400);
   return { stored: localStorage.getItem('vfr.avatarProfiles.v1'), height: $('#m-heightCm').value, text: document.body.textContent.includes('Not saved yet') };`);
 check("delete removes stored measurements", r.stored === null && r.text, `height now ${r.height}`);
 
+// 7b. Your data: export, then delete everything (PRD §8)
+r = await evalJs(`${HELPERS} const summary = [...document.querySelectorAll('.danger-zone p')].map(p=>p.textContent).join(' ');
+  btn('Download my data').click(); await wait(400);
+  const exported = document.querySelector('[role=status]')?.textContent;
+  btn('Delete all my data').click(); await wait(100); btn('Yes, delete everything').click(); await wait(400);
+  return { summary, exported, looks: localStorage.getItem('vfr.savedLooks.v1'), avatars: localStorage.getItem('vfr.avatarProfiles.v1') };`);
+check("data summary counts saved looks", r.summary.includes("1 saved look"), r.summary);
+check("download my data confirms", /downloaded/.test(r.exported ?? ""), r.exported);
+check("delete all clears avatar and looks", r.looks === null && r.avatars === null);
+
 // 8. Mobile layout
 await send("Emulation.setDeviceMetricsOverride", { width: 400, height: 860, deviceScaleFactor: 2, mobile: true });
-await go("/try-on/demo-relaxed-tee?variant=ecru&size=M", 5000);
+await go("/try-on/demo-relaxed-tee?variant=ecru&size=M", READY.tryOn);
 r = await evalJs(`return document.documentElement.scrollWidth <= window.innerWidth;`);
 check("no horizontal scroll at 400px", r === true);
 await shot("e2e-mobile");

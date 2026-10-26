@@ -129,11 +129,22 @@ export interface ViewportProps {
   autoRotate?: boolean;
   /** Changing this plays the scan sweep (e.g. on size change). */
   scanKey?: string;
+  /**
+   * Compare mode (FR-043): when given, a second copy of the same avatar is
+   * drawn to the right wearing this content, and `children` moves to the left.
+   */
+  secondary?: ReactNode;
 }
 
-export default function Viewport({ shape, view, viewNonce, children, label, overlay, autoRotate = false, scanKey }: ViewportProps) {
+/** How far each avatar sits from the centre in compare mode (m); platforms just touch. */
+const PAIR_OFFSET_M = 0.62;
+
+export default function Viewport({ shape, view, viewNonce, children, label, overlay, autoRotate = false, scanKey, secondary }: ViewportProps) {
+  const pair = secondary !== undefined;
+  const half = pair ? PAIR_OFFSET_M : 0;
   const targetY = shape.heightM * 0.5;
-  const distance = shape.heightM * 2.25;
+  // Pull back in compare mode so both avatars fit the frame.
+  const distance = shape.heightM * (pair ? 2.9 : 2.25);
   const initial = useRef<[number, number, number]>([0, targetY + 0.08, distance]);
 
   return (
@@ -142,12 +153,22 @@ export default function Viewport({ shape, view, viewNonce, children, label, over
         <Studio />
         <ambientLight intensity={0.15} />
         <directionalLight position={[2, 4.5, 3]} intensity={1.2} castShadow shadow-mapSize={[1024, 1024]} shadow-bias={-0.0004} shadow-normalBias={0.02}>
-          <orthographicCamera attach="shadow-camera" args={[-1.2, 1.2, 2.2, -0.2, 0.1, 10]} />
+          <orthographicCamera attach="shadow-camera" args={[-1.6, 1.6, 2.2, -0.2, 0.1, 10]} />
         </directionalLight>
-        <Platform />
-        <Avatar shape={shape} />
-        <Suspense fallback={null}>{children}</Suspense>
-        <ScanSweep trigger={scanKey} height={shape.heightM + 0.02} radius={0.5} />
+        <group position-x={-half}>
+          <Platform />
+          <Avatar shape={shape} />
+          <Suspense fallback={null}>{children}</Suspense>
+          <ScanSweep trigger={scanKey} height={shape.heightM + 0.02} radius={0.5} />
+        </group>
+        {pair && (
+          <group position-x={half}>
+            <Platform />
+            <Avatar shape={shape} />
+            <Suspense fallback={null}>{secondary}</Suspense>
+            <ScanSweep trigger={scanKey} height={shape.heightM + 0.02} radius={0.5} />
+          </group>
+        )}
         <OrbitControls
           makeDefault
           enablePan={false}

@@ -10,7 +10,12 @@ export type AnalyticsEvent =
   | { name: "tryon_rendered"; props: { productId: string; variantId: string; size: string } }
   | { name: "tryon_asset_failed"; props: { productId: string; variantId: string; size: string } }
   | { name: "size_switched"; props: { productId: string; from: string; to: string } }
-  | { name: "return_to_product"; props: { productId: string; variantId: string; size: string } };
+  | { name: "return_to_product"; props: { productId: string; variantId: string; size: string } }
+  | { name: "size_compare_started"; props: { productId: string; sizes: [string, string] } }
+  | { name: "look_saved"; props: { productId: string; variantId: string; size: string; compareSize: string | null } }
+  | { name: "look_removed"; props: Record<string, never> }
+  | { name: "data_exported"; props: Record<string, never> }
+  | { name: "all_data_deleted"; props: Record<string, never> };
 
 export interface AnalyticsSink {
   track(event: AnalyticsEvent): void;

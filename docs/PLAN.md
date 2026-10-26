@@ -18,7 +18,8 @@ Legend: ✅ done · 🟡 partial or prototype · ⬜ not started
 | FR-030–034 | Asset records, status, provenance, material flags | 🟡 | Data model and checks only; no admin UI |
 | FR-035–037 | Format pipeline, mesh QA, batch import | ⬜ | Milestone 2 |
 | FR-040–042 | Size switch, labels, static view | ✅ | |
-| FR-043–046 | Side-by-side comparison, fit indicators, confidence labels, recommendations | 🟡 | Validation-level badge done; measurement table labelled as demo data |
+| FR-043 | Side-by-side size comparison | ✅ | Two identical avatars in one scene; `?compare=` in the URL |
+| FR-044–046 | Fit indicators, confidence labels, recommendations | 🟡 | Validation-level badge done; measurement table labelled as demo data |
 | FR-050 | Approved geometry on avatar | ✅ | Solid colour; no textures yet |
 | FR-051–056 | Poses, precomputed motion, dynamic cloth | 🟡 | `FittingEngine` abstraction only |
 | FR-060 | Launch from own catalog | ✅ | |
@@ -29,10 +30,10 @@ Legend: ✅ done · 🟡 partial or prototype · ⬜ not started
 
 **Milestone 1 follow-ups**
 
-1. Add a fast A/B comparison between two sizes (FR-043): two garment layers with a toggle or split view.
+1. ~~Side-by-side size comparison (FR-043)~~ done. Also done: saved looks, data export/delete-all, GitHub Pages deployment.
 2. Show a list of saved avatars and allow naming them (FR-007).
 3. Add an accessibility pass: screen-reader check of the try-on page and a 3D-free summary view.
-4. Initialise git and add CI (`npm test`, `npm run typecheck`, `npm run build`, and the smoke test against `next start`).
+4. ~~Git and CI~~ done: the Pages workflow runs typecheck and unit tests on every push. Still to add: the browser smoke test in CI.
 
 **Milestone 2: garment asset workflow**
 

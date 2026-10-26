@@ -26,7 +26,10 @@ npm run dev          # http://localhost:3000
 | `npm test` | Unit tests (Vitest): conversions, validation, profile serialization, size mapping, GLB output, fitting engine |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run assets:demo` | Regenerate the demo garment GLBs in `public/demo-assets/` |
-| `npm run smoke` | Browser smoke test of the full P0 flow against a running server (see the header of `scripts/smoke-e2e.mjs`) |
+| `npm run check` | Typecheck, unit tests and a production build in one go: run before pushing |
+| `npm run smoke` | Browser smoke test of the full flow against a running server (see the header of `scripts/smoke-e2e.mjs`) |
+| `npm run build:static` | Build plain HTML/JS files into `out/` for static hosting (what GitHub Pages serves) |
+| `npm run preview:static` | Serve `out/` locally the way GitHub Pages does (see the header of `scripts/serve-static.mjs`) |
 
 **Environment variables:** none are needed for the MVP. Nothing calls an external service, and profiles live in browser `localStorage`. When account-backed storage is added, its keys go in `.env.local`, which is git-ignored.
 
@@ -46,14 +49,17 @@ npm run dev          # http://localhost:3000
 | Size switching keeps the avatar; selection is labelled and stored in the URL (FR-040–042) | `src/components/TryOn.tsx` |
 | Missing or broken asset → fallback message, no crash (AC-9) | `Garment.tsx` error boundary; try "Show QA fixtures" in the catalog |
 | Prototype disclosures (AC-10, FR-047) | Banner, try-on limitations list, home page |
+| Side-by-side comparison of two sizes on identical avatars (FR-043) | "Compare two sizes side by side" on the try-on screen |
+| Saved looks: keep a product/colour/size (or a size comparison) and reopen it later (journey step 11) | "Save this look" → `/saved`; `src/domain/looks.ts` |
+| Download my data / delete all my data (PRD §8) | "Your data" on `/avatar` |
 
 ### Launch contract (draft for FR-025/061)
 
 ```
-/try-on/{productId}?variant={variantId}&size={sizeLabel}
+/try-on/{productId}?variant={variantId}&size={sizeLabel}&compare={sizeLabel}
 ```
 
-Both query parameters are optional. If a size has no approved asset, the page falls back to an available size and says why. A retailer integration would deep-link here with an authorized product ID.
+All query parameters are optional; `compare` opens the side-by-side view. If a size has no approved asset, the page falls back to an available size and says why. A retailer integration would deep-link here with an authorized product ID.
 
 ## Architecture
 
@@ -77,8 +83,9 @@ src/
     demoGarments.ts    demo garment builder (parts: shell, sleeve, yoke, cap, collar, hem fold)
     glb.ts             minimal GLB writer (with the custom _PART vertex attribute)
   components/          React UI; three/ holds the R3F viewport, avatar, garment loader
-  app/                 Next.js App Router pages: /, /avatar, /catalog, /try-on/[productId]
-scripts/               demo asset generator, browser smoke test
+  app/                 Next.js App Router pages: /, /avatar, /catalog, /saved, /try-on/[productId]
+scripts/               demo asset generator, browser smoke test, static preview server
+.github/workflows/     GitHub Pages deployment
 public/demo-assets/    generated GLBs (one per product × colour × size)
 ```
 
@@ -88,6 +95,34 @@ public/demo-assets/    generated GLBs (one per product × colour × size)
 - **Accounts:** implement `ProfileStore` against a backend with per-user authorization, then migrate local profiles by reading `LocalProfileStore.list()` and saving them through the new store.
 - **Retailers:** write an adapter that maps an approved feed into the `Catalog` type. Keep retailer specifics out of `domain/`.
 - **Body model:** replace `computeBodyShape`, `bodySdf.ts` and `Avatar.tsx` with a licensed morphable model (garment conform only needs a signed distance to the body). `AvatarProfile.bodyModel` lets old saves be detected.
+
+## Publishing the demo on GitHub Pages
+
+The app keeps all customer data in the visitor's browser, so it can be hosted as plain static files. Every push to `main` runs `.github/workflows/deploy-pages.yml`, which typechecks, tests, builds the static site and publishes it.
+
+One-time setup:
+
+1. Create an **empty, public** repository on GitHub (free GitHub Pages needs a public repo). Don't add a README, .gitignore or license.
+2. Push this project to it:
+   ```bash
+   git remote add origin https://github.com/YOUR-USERNAME/virtual-fitting-room.git
+   git push -u origin main
+   ```
+   When asked for a password, paste a personal access token (github.com/settings/tokens, "repo" scope), not your account password.
+3. In the repository on GitHub: **Settings → Pages → Build and deployment → Source: GitHub Actions**.
+4. Open the **Actions** tab and wait for "Deploy to GitHub Pages" to finish (about 2 minutes). If it ran before step 3 and failed, click **Re-run all jobs**.
+
+The site is then live at `https://YOUR-USERNAME.github.io/virtual-fitting-room/`. After that, every `git push` republishes it.
+
+To check the exact published build locally first:
+
+```bash
+NEXT_PUBLIC_BASE_PATH=/virtual-fitting-room npm run build:static
+BASE_PATH=/virtual-fitting-room npm run preview:static   # http://localhost:3124/virtual-fitting-room/
+BASE_URL=http://localhost:3124/virtual-fitting-room npm run smoke
+```
+
+Each visitor's avatar and saved looks stay in their own browser; people viewing the shared link never see each other's data.
 
 ## Garment asset workflow (demo)
 
@@ -99,7 +134,7 @@ For real garments, canonical source files (CLO/Browzwear/Style3D projects, patte
 
 ## Privacy
 
-- Measurements are stored only in this browser's `localStorage` under `vfr.avatarProfiles.v1`. **Delete avatar** removes them.
+- Measurements and saved looks are stored only in this browser's `localStorage` (`vfr.avatarProfiles.v1`, `vfr.savedLooks.v1`). **Download my data** exports both as JSON; **Delete all my data** removes both.
 - Analytics events never include measurements, and the MVP sink only logs to the dev console.
 - No photos or scans are collected.
 
@@ -108,10 +143,10 @@ For real garments, canonical source files (CLO/Browzwear/Style3D projects, patte
 - **Mannequin:** the avatar is a smooth blend of sculpted primitives around a lofted torso. Its landmark heights are fixed fractions of height, and the torso cross-sections at chest, waist and hips are ellipses whose perimeter matches the entered circumference (tested to ±2% at waist and hips). It moves in the right direction as values change, but it isn't anatomically calibrated (PRD FR-016).
 - **Garment placement:** garments are attached at the shoulder or waist line, then conformed geometrically (`lib/conform.ts`): pushed out of the body, settled onto up-facing surfaces such as the shoulders, and smoothed. The garment's size is never changed. Where it is more than 1.2 cm smaller than the body, that area is tinted and the viewer says by how much. The shoulder yoke and sleeve cap are approximate and excluded from that report. None of this is a fit prediction.
 - **Demo garments:** they are procedural shapes built from fictional measurement tables. They have no patterns, seams, textures or fabric properties: every physical property is recorded as `not-captured`.
-- **Accounts:** there are none (FR-001 is deferred). Saved avatars don't sync across browsers.
+- **Accounts:** there are none (FR-001 is deferred). Saved avatars and looks don't sync across browsers or devices.
+- **Unsaved-changes warning:** the avatar editor warns on reload or closing the tab. Clicking an in-app link with unsaved edits doesn't warn yet.
 - **Smoke test:** across five runs, one logged a React `removeChild` DOM exception during rapid page navigation. It didn't affect any check and hasn't been reproduced since; keep an eye on it.
-- **Version control:** git isn't initialised yet on this machine because Xcode Command Line Tools aren't installed. Run `xcode-select --install`, then `git init`.
 
 ## Dependencies
 
-All runtime dependencies are MIT-licensed: next 16.3.8, react 19, three 0.180, @react-three/fiber 9 and @react-three/drei 10. Dev tools are MIT or Apache-2.0. `npm audit` reports 0 known vulnerabilities as of 2026-10-14. Next's optional image optimizer `sharp` bundles LGPL-3.0 libvips; the app doesn't use `next/image`, but review this before shipping.
+All runtime dependencies are MIT-licensed: next 16.4.2, react 19, three 0.180, @react-three/fiber 9 and @react-three/drei 10. Dev tools are MIT or Apache-2.0. `npm audit` reports 0 known vulnerabilities as of 2026-10-26 (Next was moved from 16.3.8 and Vite from 8.3.2 to patched releases that day). Next's optional image optimizer `sharp` bundles LGPL-3.0 libvips; the app doesn't use `next/image`, but review this before shipping.

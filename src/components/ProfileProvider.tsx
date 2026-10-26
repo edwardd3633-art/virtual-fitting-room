@@ -11,6 +11,8 @@ interface ProfileContextValue {
   storeKind: ProfileStore["kind"];
   save(profile: AvatarProfile): Promise<void>;
   remove(): Promise<void>;
+  /** Every stored avatar, for data export (PRD §8). */
+  listAll(): Promise<AvatarProfile[]>;
 }
 
 const ProfileContext = createContext<ProfileContextValue | null>(null);
@@ -59,9 +61,11 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     setProfile(null);
   }, [store, profile]);
 
+  const listAll = useCallback(async () => (store ? store.list() : []), [store]);
+
   const value = useMemo<ProfileContextValue>(
-    () => ({ status, profile, storeKind: store?.kind ?? "local", save, remove }),
-    [status, profile, store, save, remove],
+    () => ({ status, profile, storeKind: store?.kind ?? "local", save, remove, listAll }),
+    [status, profile, store, save, remove, listAll],
   );
   return <ProfileContext.Provider value={value}>{children}</ProfileContext.Provider>;
 }
